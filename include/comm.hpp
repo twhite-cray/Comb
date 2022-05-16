@@ -1095,6 +1095,7 @@ struct CommunicatorsAvailable
 {
   bool mock = false;
   bool mpi = false;
+  bool mpi_active_rma = false;
   bool mpi_persistent = false;
   bool gdsync = false;
   bool gpump = false;

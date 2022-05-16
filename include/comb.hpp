@@ -156,6 +156,13 @@ extern void test_cycles_mpi(CommInfo& comminfo, MeshInfo& info,
 #endif
 
 #ifdef COMB_ENABLE_MPI
+extern void test_cycles_mpi_active_rma(CommInfo& comminfo, MeshInfo& info,
+                            COMB::Executors& exec,
+                            COMB::Allocators& alloc,
+                            IdxT num_vars, IdxT ncycles, Timer& tm, Timer& tm_total);
+#endif
+
+#ifdef COMB_ENABLE_MPI
 extern void test_cycles_mpi_persistent(CommInfo& comminfo, MeshInfo& info,
                             COMB::Executors& exec,
                             COMB::Allocators& alloc,

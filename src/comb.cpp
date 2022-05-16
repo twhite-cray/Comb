@@ -270,6 +270,9 @@ int main(int argc, char** argv)
                 comm_avail.mpi = enabledisable;
 #endif
 #ifdef COMB_ENABLE_MPI
+                comm_avail.mpi_active_rma = enabledisable;
+#endif
+#ifdef COMB_ENABLE_MPI
                 comm_avail.mpi_persistent = enabledisable;
 #endif
 #ifdef COMB_ENABLE_GDSYNC
@@ -289,6 +292,10 @@ int main(int argc, char** argv)
               } else if (strcmp(argv[i], "mpi") == 0) {
 #ifdef COMB_ENABLE_MPI
                 comm_avail.mpi = enabledisable;
+#endif
+              } else if (strcmp(argv[i], "mpi_active_rma") == 0) {
+#ifdef COMB_ENABLE_MPI
+                comm_avail.mpi_active_rma = enabledisable;
 #endif
               } else if (strcmp(argv[i], "mpi_persistent") == 0) {
 #ifdef COMB_ENABLE_MPI
@@ -912,6 +919,11 @@ int main(int argc, char** argv)
 #ifdef COMB_ENABLE_MPI
     if (comm_avail.mpi)
       COMB::test_cycles_mpi(comminfo, info, exec, alloc, num_vars, ncycles, tm, tm_total);
+#endif
+
+#ifdef COMB_ENABLE_MPI
+    if (comm_avail.mpi_active_rma)
+      COMB::test_cycles_mpi_active_rma(comminfo, info, exec, alloc, num_vars, ncycles, tm, tm_total);
 #endif
 
 #ifdef COMB_ENABLE_MPI
