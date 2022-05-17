@@ -51,6 +51,8 @@ struct CommContext<mpi_active_rma_pol> : MPIContext
   using recv_status_type = typename pol::recv_status_type;
 
   MPI_Comm comm = MPI_COMM_NULL;
+  MPI_Group recv_group, send_group;
+  MPI_Win recv_win, send_win;
 
   CommContext()
     : base()
@@ -85,13 +87,23 @@ struct CommContext<mpi_active_rma_pol> : MPIContext
   void connect_ranks(std::vector<int> const& send_ranks,
                      std::vector<int> const& recv_ranks)
   {
-    COMB::ignore_unused(send_ranks, recv_ranks);
+    MPI_Group world;
+    int ret = MPI_Comm_group(comm, &world);
+    assert(ret == MPI_SUCCESS);
+    ret = MPI_Group_incl(world, recv_ranks.size(), recv_ranks.data(), &recv_group);
+    assert(ret == MPI_SUCCESS);
+    ret = MPI_Group_incl(world, send_ranks.size(), send_ranks.data(), &send_group);
+    assert(ret == MPI_SUCCESS);
   }
 
   void disconnect_ranks(std::vector<int> const& send_ranks,
                         std::vector<int> const& recv_ranks)
   {
     COMB::ignore_unused(send_ranks, recv_ranks);
+    int ret = MPI_Group_free(&send_group);
+    assert(ret == MPI_SUCCESS);
+    ret = MPI_Group_free(&recv_group);
+    assert(ret == MPI_SUCCESS);
   }
 
 
@@ -301,17 +313,25 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
 
   void allocate(context_type& con, communicator_type& con_comm, message_type** msgs, IdxT len, detail::Async async)
   {
-    COMB::ignore_unused(con, con_comm, async);
+    COMB::ignore_unused(con_comm, async);
     LOGPRINTF("%p send allocate msgs %p len %d\n", this, msgs, len);
     if (len <= 0) return;
+   
+    const size_t var_size = this->m_variables.size();
+    size_t nbytes = 0;
     for (IdxT i = 0; i < len; ++i) {
-      message_type* msg = msgs[i];
+      message_type *const msg = msgs[i];
       assert(msg->buf == nullptr);
+      nbytes += msg->nbytes();
+    }
+    nbytes *= var_size;
 
-      IdxT nbytes = msg->nbytes() * this->m_variables.size();
+    msgs[0]->buf = this->m_aloc.allocate(nbytes);
+    LOGPRINTF("%p send allocate %d msgs %p buf %p nbytes %d\n", this, len, msgs[0], msgs[0]->buf, nbytes);
 
-      msg->buf = this->m_aloc.allocate(nbytes);
-      LOGPRINTF("%p send allocate msg %p buf %p nbytes %d\n", this, msg, msg->buf, nbytes);
+    for (IdxT i = 1; i < len; i++) {
+      message_type *const prev = msgs[i-1];
+      msgs[i]->buf = reinterpret_cast<char*>(prev->buf) + (var_size * prev->nbytes());
     }
 
     if (comb_allow_pack_loop_fusion()) {
@@ -463,13 +483,12 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
     COMB::ignore_unused(con, con_comm, async);
     LOGPRINTF("%p send deallocate con %p msgs %p len %d\n", this, &con, msgs, len);
     if (len <= 0) return;
+    LOGPRINTF("%p send deallocate %d msgs %p buf %p\n", this, len, msgs[0], msgs[0]->buf);
+    this->m_aloc.deallocate(msgs[0]->buf);
+
     for (IdxT i = 0; i < len; ++i) {
       message_type* msg = msgs[i];
-      LOGPRINTF("%p send deallocate msg %p buf %p\n", this, msg, msg->buf);
       assert(msg->buf != nullptr);
-
-      this->m_aloc.deallocate(msg->buf);
-
       msg->buf = nullptr;
     }
 
