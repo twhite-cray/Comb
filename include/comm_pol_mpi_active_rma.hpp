@@ -273,6 +273,14 @@ struct Message<MessageBase::Kind::recv, mpi_active_rma_pol>
 };
 
 
+__attribute__((unused))
+static size_t page_align(const size_t n)
+{ 
+  constexpr size_t page = 4096;
+  return ((n + page - 1) / page) * page;
+}
+
+
 template < typename exec_policy >
 struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
   : detail::MessageGroupInterface<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
@@ -322,16 +330,15 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
     for (IdxT i = 0; i < len; ++i) {
       message_type *const msg = msgs[i];
       assert(msg->buf == nullptr);
-      nbytes += msg->nbytes();
+      nbytes += page_align(msg->nbytes() * var_size);
     }
-    nbytes *= var_size;
 
     msgs[0]->buf = this->m_aloc.allocate(nbytes);
     LOGPRINTF("%p send allocate %d msgs %p buf %p nbytes %d\n", this, len, msgs[0], msgs[0]->buf, nbytes);
 
     for (IdxT i = 1; i < len; i++) {
       message_type *const prev = msgs[i-1];
-      msgs[i]->buf = reinterpret_cast<char*>(prev->buf) + (var_size * prev->nbytes());
+      msgs[i]->buf = reinterpret_cast<char*>(prev->buf) + page_align(var_size * prev->nbytes());
     }
 
     if (comb_allow_pack_loop_fusion()) {
