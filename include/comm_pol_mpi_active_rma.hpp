@@ -321,7 +321,7 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
 
   void allocate(context_type& con, communicator_type& con_comm, message_type** msgs, IdxT len, detail::Async async)
   {
-    COMB::ignore_unused(con_comm, async);
+    COMB::ignore_unused(con, async);
     LOGPRINTF("%p send allocate msgs %p len %d\n", this, msgs, len);
     if (len <= 0) return;
    
@@ -334,11 +334,11 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
     }
 
     msgs[0]->buf = this->m_aloc.allocate(nbytes);
-    LOGPRINTF("%p send allocate %d msgs %p buf %p nbytes %d\n", this, len, msgs[0], msgs[0]->buf, nbytes);
+    LOGPRINTF("%p send allocate %d msgs %p buf %p nbytes %lu\n", this, len, msgs[0], msgs[0]->buf, nbytes);
 
     for (IdxT i = 1; i < len; i++) {
       message_type *const prev = msgs[i-1];
-      msgs[i]->buf = reinterpret_cast<char*>(prev->buf) + page_align(var_size * prev->nbytes());
+      msgs[i]->buf = reinterpret_cast<char*>(prev->buf) + page_align(prev->nbytes() * var_size);
     }
 
     int ret = MPI_Win_create(msgs[0]->buf, nbytes, 1, MPI_INFO_NULL, con_comm.comm, &con_comm.send_win);
@@ -490,7 +490,7 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
 
   void deallocate(context_type& con, communicator_type& con_comm, message_type** msgs, IdxT len, detail::Async async)
   {
-    COMB::ignore_unused(con, con_comm, async);
+    COMB::ignore_unused(con, async);
     LOGPRINTF("%p send deallocate con %p msgs %p len %d\n", this, &con, msgs, len);
     if (len <= 0) return;
 
@@ -552,19 +552,28 @@ struct MessageGroup<MessageBase::Kind::recv, mpi_active_rma_pol, exec_policy>
 
   void allocate(context_type& con, communicator_type& con_comm, message_type** msgs, IdxT len, detail::Async async)
   {
-    COMB::ignore_unused(con, con_comm, async);
+    COMB::ignore_unused(con, async);
     LOGPRINTF("%p recv allocate con %p msgs %p len %d\n", this, &con, msgs, len);
     if (len <= 0) return;
+    
+    const size_t var_size = this->m_variables.size();
+    size_t nbytes = 0;
     for (IdxT i = 0; i < len; ++i) {
-      message_type* msg = msgs[i];
+      message_type *const msg = msgs[i];
       assert(msg->buf == nullptr);
-
-      IdxT nbytes = msg->nbytes() * this->m_variables.size();
-
-      msg->buf = this->m_aloc.allocate(nbytes);
-      LOGPRINTF("%p recv allocate msg %p buf %p nbytes %d\n",
-                                this, msg, msg->buf, msg->nbytes() * this->m_variables.size());
+      nbytes += page_align(msg->nbytes() * var_size);
     }
+
+    msgs[0]->buf = this->m_aloc.allocate(nbytes);
+    LOGPRINTF("%p recv allocate %d msgs %p buf %p nbytes %lu\n", this, len, msgs[0], msgs[0]->buf, nbytes);
+
+    for (IdxT i = 1; i < len; i++) {
+      message_type *const prev = msgs[i-1];
+      msgs[i]->buf = reinterpret_cast<char*>(prev->buf) + page_align(prev->nbytes() * var_size);
+    }
+
+    int ret = MPI_Win_create(msgs[0]->buf, nbytes, 1, MPI_INFO_NULL, con_comm.comm, &con_comm.recv_win);
+    assert(ret == MPI_SUCCESS);
 
     if (comb_allow_pack_loop_fusion()) {
       this->m_fuser.allocate(con, this->m_variables, this->m_items.size());
@@ -665,16 +674,19 @@ struct MessageGroup<MessageBase::Kind::recv, mpi_active_rma_pol, exec_policy>
 
   void deallocate(context_type& con, communicator_type& con_comm, message_type** msgs, IdxT len, detail::Async async)
   {
-    COMB::ignore_unused(con, con_comm, async);
+    COMB::ignore_unused(con, async);
     LOGPRINTF("%p recv deallocate con %p msgs %p len %d\n", this, &con, msgs, len);
     if (len <= 0) return;
+
+    int ret = MPI_Win_free(&con_comm.recv_win);
+    assert(ret == MPI_SUCCESS);
+
+    LOGPRINTF("%p recv deallocate %d msgs %p buf %p\n", this, len, msgs[0], msgs[0]->buf);
+    this->m_aloc.deallocate(msgs[0]->buf);
+
     for (IdxT i = 0; i < len; ++i) {
       message_type* msg = msgs[i];
-      LOGPRINTF("%p recv deallocate msg %p buf %p\n", this, msg, msg->buf);
       assert(msg->buf != nullptr);
-
-      this->m_aloc.deallocate(msg->buf);
-
       msg->buf = nullptr;
     }
 
