@@ -53,6 +53,8 @@ struct CommContext<mpi_active_rma_pol> : MPIContext
   MPI_Comm comm = MPI_COMM_NULL;
   MPI_Group recv_group, send_group;
   MPI_Win recv_win, send_win;
+  std::vector<int> recv_ranks, send_ranks;
+  std::vector<long> offsets;
 
   CommContext()
     : base()
@@ -84,26 +86,25 @@ struct CommContext<mpi_active_rma_pol> : MPIContext
   send_status_type send_status_null() { return send_status_type{}; }
   recv_status_type recv_status_null() { return recv_status_type{}; }
 
-  void connect_ranks(std::vector<int> const& send_ranks,
-                     std::vector<int> const& recv_ranks)
+  void connect_ranks(std::vector<int> const& send_ranks_,
+                     std::vector<int> const& recv_ranks_)
   {
+    send_ranks = send_ranks_;
+    recv_ranks = recv_ranks_;
     MPI_Group world;
-    int ret = MPI_Comm_group(comm, &world);
-    assert(ret == MPI_SUCCESS);
-    ret = MPI_Group_incl(world, recv_ranks.size(), recv_ranks.data(), &recv_group);
-    assert(ret == MPI_SUCCESS);
-    ret = MPI_Group_incl(world, send_ranks.size(), send_ranks.data(), &send_group);
-    assert(ret == MPI_SUCCESS);
+    MPI_Comm_group(comm, &world);
+    MPI_Group_incl(world, recv_ranks.size(), recv_ranks.data(), &recv_group);
+    MPI_Group_incl(world, send_ranks.size(), send_ranks.data(), &send_group);
   }
 
-  void disconnect_ranks(std::vector<int> const& send_ranks,
-                        std::vector<int> const& recv_ranks)
+  void disconnect_ranks(std::vector<int> const& send_ranks_,
+                        std::vector<int> const& recv_ranks_)
   {
-    COMB::ignore_unused(send_ranks, recv_ranks);
-    int ret = MPI_Group_free(&send_group);
-    assert(ret == MPI_SUCCESS);
-    ret = MPI_Group_free(&recv_group);
-    assert(ret == MPI_SUCCESS);
+    COMB::ignore_unused(send_ranks_, recv_ranks_);
+    MPI_Group_free(&send_group);
+    MPI_Group_free(&recv_group);
+    recv_ranks.clear();
+    send_ranks.clear();
   }
 
 
@@ -341,8 +342,7 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
       msgs[i]->buf = reinterpret_cast<char*>(prev->buf) + page_align(prev->nbytes() * var_size);
     }
 
-    int ret = MPI_Win_create(msgs[0]->buf, nbytes, 1, MPI_INFO_NULL, con_comm.comm, &con_comm.send_win);
-    assert(ret == MPI_SUCCESS);
+    MPI_Win_create(msgs[0]->buf, nbytes, 1, MPI_INFO_NULL, con_comm.comm, &con_comm.send_win);
 
     if (comb_allow_pack_loop_fusion()) {
       this->m_fuser.allocate(con, this->m_variables, this->m_items.size());
@@ -494,8 +494,7 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
     LOGPRINTF("%p send deallocate con %p msgs %p len %d\n", this, &con, msgs, len);
     if (len <= 0) return;
 
-    int ret = MPI_Win_free(&con_comm.send_win);
-    assert(ret == MPI_SUCCESS);
+    MPI_Win_free(&con_comm.send_win);
 
     LOGPRINTF("%p send deallocate %d msgs %p buf %p\n", this, len, msgs[0], msgs[0]->buf);
     this->m_aloc.deallocate(msgs[0]->buf);
@@ -556,24 +555,38 @@ struct MessageGroup<MessageBase::Kind::recv, mpi_active_rma_pol, exec_policy>
     LOGPRINTF("%p recv allocate con %p msgs %p len %d\n", this, &con, msgs, len);
     if (len <= 0) return;
     
+    std::vector<long> offsets(len);
     const size_t var_size = this->m_variables.size();
-    size_t nbytes = 0;
+    long nbytes = 0;
     for (IdxT i = 0; i < len; ++i) {
       message_type *const msg = msgs[i];
       assert(msg->buf == nullptr);
+      offsets[i] = nbytes;
       nbytes += page_align(msg->nbytes() * var_size);
     }
 
-    msgs[0]->buf = this->m_aloc.allocate(nbytes);
+    char *const buf = reinterpret_cast<char*>(this->m_aloc.allocate(nbytes));
+    for (IdxT i = 0; i < len; i++) msgs[i]->buf = buf + offsets[i];
     LOGPRINTF("%p recv allocate %d msgs %p buf %p nbytes %lu\n", this, len, msgs[0], msgs[0]->buf, nbytes);
 
-    for (IdxT i = 1; i < len; i++) {
-      message_type *const prev = msgs[i-1];
-      msgs[i]->buf = reinterpret_cast<char*>(prev->buf) + page_align(prev->nbytes() * var_size);
-    }
+    MPI_Win_create(msgs[0]->buf, nbytes, 1, MPI_INFO_NULL, con_comm.comm, &con_comm.recv_win);
 
-    int ret = MPI_Win_create(msgs[0]->buf, nbytes, 1, MPI_INFO_NULL, con_comm.comm, &con_comm.recv_win);
-    assert(ret == MPI_SUCCESS);
+    {
+      constexpr int tag = 33;
+      const int send_size = con_comm.send_ranks.size();
+      const int recv_size = con_comm.recv_ranks.size();
+      const int reqs_size = send_size + recv_size;
+      std::vector<MPI_Request> reqs(reqs_size);
+
+      // Recv from future receivers
+      con_comm.offsets.resize(send_size);
+      for (int i = 0; i < send_size; i++) MPI_Irecv(&con_comm.offsets[i], 1, MPI_LONG, con_comm.send_ranks[i], tag, con_comm.comm, &reqs[i]);
+
+      // Send to future senders
+      for (int i = 0; i < recv_size; i++) MPI_Isend(&offsets[i], 1, MPI_LONG, con_comm.recv_ranks[i], tag, con_comm.comm, &reqs[i + send_size]);
+
+      MPI_Waitall(reqs_size, reqs.data(), MPI_STATUSES_IGNORE);
+    }
 
     if (comb_allow_pack_loop_fusion()) {
       this->m_fuser.allocate(con, this->m_variables, this->m_items.size());
@@ -678,8 +691,7 @@ struct MessageGroup<MessageBase::Kind::recv, mpi_active_rma_pol, exec_policy>
     LOGPRINTF("%p recv deallocate con %p msgs %p len %d\n", this, &con, msgs, len);
     if (len <= 0) return;
 
-    int ret = MPI_Win_free(&con_comm.recv_win);
-    assert(ret == MPI_SUCCESS);
+    MPI_Win_free(&con_comm.recv_win);
 
     LOGPRINTF("%p recv deallocate %d msgs %p buf %p\n", this, len, msgs[0], msgs[0]->buf);
     this->m_aloc.deallocate(msgs[0]->buf);
