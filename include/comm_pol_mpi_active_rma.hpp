@@ -217,6 +217,7 @@ struct Message<MessageBase::Kind::recv, mpi_active_rma_pol>
                            int count, request_type* requests,
                            status_type* statuses)
   {
+    assert(!"supported");
     LOGPRINTF("Message<mpi>::wait_recv_any count %d requests %p statuses %p\n", count, requests, statuses);
     int ret = detail::MPI::Waitany(count, requests, statuses);
     LOGPRINTF("Message<mpi>::wait_recv_any return %d\n", ret);
@@ -227,6 +228,7 @@ struct Message<MessageBase::Kind::recv, mpi_active_rma_pol>
                            int count, request_type* requests,
                            status_type* statuses)
   {
+    assert(!"supported");
     LOGPRINTF("Message<mpi>::test_recv_any count %d requests %p statuses %p\n", count, requests, statuses);
     int ret = detail::MPI::Testany(count, requests, statuses);
     LOGPRINTF("Message<mpi>::test_recv_any return %d\n", ret);
@@ -237,6 +239,7 @@ struct Message<MessageBase::Kind::recv, mpi_active_rma_pol>
                             int count, request_type* requests,
                             int* indices, status_type* statuses)
   {
+    assert(!"supported");
     LOGPRINTF("Message<mpi>::wait_recv_some count %d requests %p indices %p statuses %p\n", count, requests, indices, statuses);
     int ret = detail::MPI::Waitsome(count, requests, indices, statuses);
     LOGPRINTF("Message<mpi>::wait_recv_some return %d\n", ret);
@@ -247,17 +250,20 @@ struct Message<MessageBase::Kind::recv, mpi_active_rma_pol>
                             int count, request_type* requests,
                             int* indices, status_type* statuses)
   {
+    assert(!"supported");
     LOGPRINTF("Message<mpi>::test_recv_some count %d requests %p indices %p statuses %p\n", count, requests, indices, statuses);
     int ret = detail::MPI::Testsome(count, requests, indices, statuses);
     LOGPRINTF("Message<mpi>::test_recv_some return %d\n", ret);
     return std::move(ret);
   }
 
-  static void wait_recv_all(communicator_type&,
+  static void wait_recv_all(communicator_type &comm,
                             int count, request_type* requests,
                             status_type* statuses)
   {
     LOGPRINTF("Message<mpi>::wait_recv_all count %d requests %p statuses %p\n", count, requests, statuses);
+    MPI_Win_complete(comm.recv_win);
+    MPI_Win_wait(comm.recv_win);
     detail::MPI::Waitall(count, requests, statuses);
     LOGPRINTF("Message<mpi>::wait_recv_all return\n");
   }
@@ -448,6 +454,7 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
     LOGPRINTF("%p send Isend con %p msgs %p len %d\n", this, &con, msgs, len);
     if (len <= 0) return;
     start_Isends(con, con_comm);
+    MPI_Win_start(con_comm.send_group, 0, con_comm.recv_win);
     for (IdxT i = 0; i < len; ++i) {
       const message_type* msg = msgs[i];
       LOGPRINTF("%p send Isend msg %p buf %p nbytes %d to %i tag %i\n",
@@ -595,9 +602,10 @@ struct MessageGroup<MessageBase::Kind::recv, mpi_active_rma_pol, exec_policy>
 
   void Irecv(context_type& con, communicator_type& con_comm, message_type** msgs, IdxT len, detail::Async async, request_type* requests)
   {
-    COMB::ignore_unused(con, con_comm, async);
+    COMB::ignore_unused(con, async);
     LOGPRINTF("%p recv Irecv con %p msgs %p len %d\n", this, &con, msgs, len);
     if (len <= 0) return;
+    MPI_Win_post(con_comm.recv_group, 0, con_comm.recv_win);
     for (IdxT i = 0; i < len; ++i) {
       const message_type* msg = msgs[i];
       LOGPRINTF("%p recv Irecv msg %p buf %p nbytes %d to %d tag %d\n",
