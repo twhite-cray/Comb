@@ -341,6 +341,9 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
       msgs[i]->buf = reinterpret_cast<char*>(prev->buf) + page_align(var_size * prev->nbytes());
     }
 
+    int ret = MPI_Win_create(msgs[0]->buf, nbytes, 1, MPI_INFO_NULL, con_comm.comm, &con_comm.send_win);
+    assert(ret == MPI_SUCCESS);
+
     if (comb_allow_pack_loop_fusion()) {
       this->m_fuser.allocate(con, this->m_variables, this->m_items.size());
     }
@@ -490,6 +493,10 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
     COMB::ignore_unused(con, con_comm, async);
     LOGPRINTF("%p send deallocate con %p msgs %p len %d\n", this, &con, msgs, len);
     if (len <= 0) return;
+
+    int ret = MPI_Win_free(&con_comm.send_win);
+    assert(ret == MPI_SUCCESS);
+
     LOGPRINTF("%p send deallocate %d msgs %p buf %p\n", this, len, msgs[0], msgs[0]->buf);
     this->m_aloc.deallocate(msgs[0]->buf);
 
