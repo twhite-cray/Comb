@@ -141,6 +141,7 @@ struct Message<MessageBase::Kind::send, mpi_active_rma_pol>
                            int count, request_type* requests,
                            status_type* statuses)
   {
+    assert(!"supported");
     LOGPRINTF("Message<mpi>::wait_send_any count %d requests %p statuses %p\n", count, requests, statuses);
     int ret = detail::MPI::Waitany(count, requests, statuses);
     LOGPRINTF("Message<mpi>::wait_send_any return %d\n", ret);
@@ -151,6 +152,7 @@ struct Message<MessageBase::Kind::send, mpi_active_rma_pol>
                            int count, request_type* requests,
                            status_type* statuses)
   {
+    assert(!"supported");
     LOGPRINTF("Message<mpi>::test_send_any count %d requests %p statuses %p\n", count, requests, statuses);
     int ret = detail::MPI::Testany(count, requests, statuses);
     LOGPRINTF("Message<mpi>::test_send_any return %d\n", ret);
@@ -161,6 +163,7 @@ struct Message<MessageBase::Kind::send, mpi_active_rma_pol>
                             int count, request_type* requests,
                             int* indices, status_type* statuses)
   {
+    assert(!"supported");
     LOGPRINTF("Message<mpi>::wait_send_some count %d requests %p indices %p statuses %p\n", count, requests, indices, statuses);
     int ret = detail::MPI::Waitsome(count, requests, indices, statuses);
     LOGPRINTF("Message<mpi>::wait_send_some return %d\n", ret);
@@ -171,6 +174,7 @@ struct Message<MessageBase::Kind::send, mpi_active_rma_pol>
                             int count, request_type* requests,
                             int* indices, status_type* statuses)
   {
+    assert(!"supported");
     LOGPRINTF("Message<mpi>::test_send_some count %d requests %p indices %p statuses %p\n", count, requests, indices, statuses);
     int ret = detail::MPI::Testsome(count, requests, indices, statuses);
     LOGPRINTF("Message<mpi>::test_send_some return %d\n", ret);
@@ -181,8 +185,9 @@ struct Message<MessageBase::Kind::send, mpi_active_rma_pol>
                             int count, request_type* requests,
                             status_type* statuses)
   {
+    COMB::ignore_unused(count, requests, statuses);
     LOGPRINTF("Message<mpi>::wait_send_all count %d requests %p statuses %p\n", count, requests, statuses);
-    detail::MPI::Waitall(count, requests, statuses);
+    //detail::MPI::Waitall(count, requests, statuses);
     LOGPRINTF("Message<mpi>::wait_send_all return\n");
   }
 
@@ -190,6 +195,7 @@ struct Message<MessageBase::Kind::send, mpi_active_rma_pol>
                             int count, request_type* requests,
                             status_type* statuses)
   {
+    assert(!"supported");
     LOGPRINTF("Message<mpi>::test_send_all count %d requests %p statuses %p\n", count, requests, statuses);
     bool ret = detail::MPI::Testall(count, requests, statuses);
     LOGPRINTF("Message<mpi>::test_send_all return %s\n", ret ? "true" : "false");
@@ -261,10 +267,11 @@ struct Message<MessageBase::Kind::recv, mpi_active_rma_pol>
                             int count, request_type* requests,
                             status_type* statuses)
   {
+    COMB::ignore_unused(count, requests, statuses);
     LOGPRINTF("Message<mpi>::wait_recv_all count %d requests %p statuses %p\n", count, requests, statuses);
     MPI_Win_complete(comm.recv_win);
     MPI_Win_wait(comm.recv_win);
-    detail::MPI::Waitall(count, requests, statuses);
+    //detail::MPI::Waitall(count, requests, statuses);
     LOGPRINTF("Message<mpi>::wait_recv_all return\n");
   }
 
@@ -272,6 +279,7 @@ struct Message<MessageBase::Kind::recv, mpi_active_rma_pol>
                             int count, request_type* requests,
                             status_type* statuses)
   {
+    assert(!"supported");
     LOGPRINTF("Message<mpi>::test_recv_all count %d requests %p statuses %p\n", count, requests, statuses);
     bool ret = detail::MPI::Testall(count, requests, statuses);
     LOGPRINTF("Message<mpi>::test_recv_all return %s\n", ret ? "true" : "false");
@@ -450,7 +458,7 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
 
   void Isend(context_type& con, communicator_type& con_comm, message_type** msgs, IdxT len, detail::Async async, request_type* requests)
   {
-    COMB::ignore_unused(async);
+    COMB::ignore_unused(async, requests);
     LOGPRINTF("%p send Isend con %p msgs %p len %d\n", this, &con, msgs, len);
     if (len <= 0) return;
     start_Isends(con, con_comm);
@@ -462,7 +470,7 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
       char* buf = static_cast<char*>(msg->buf);
       assert(buf != nullptr);
       const int partner_rank = msg->partner_rank;
-      const int tag = msg->msg_tag;
+      //const int tag = msg->msg_tag;
       const IdxT msg_nbytes = msg->nbytes() * this->m_variables.size();
 
       // char const* print_buf = buf;
@@ -483,8 +491,9 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
       //   }
       // }
 
-      detail::MPI::Isend(buf, msg_nbytes, MPI_BYTE,
-                         partner_rank, tag, con_comm.comm, &requests[i]);
+      //detail::MPI::Isend(buf, msg_nbytes, MPI_BYTE,
+                         //partner_rank, tag, con_comm.comm, &requests[i]);
+      MPI_Put(buf, msg_nbytes, MPI_BYTE, partner_rank, con_comm.offsets[i], msg_nbytes, MPI_BYTE, con_comm.recv_win);
     }
     finish_Isends(con, con_comm);
   }
@@ -602,10 +611,11 @@ struct MessageGroup<MessageBase::Kind::recv, mpi_active_rma_pol, exec_policy>
 
   void Irecv(context_type& con, communicator_type& con_comm, message_type** msgs, IdxT len, detail::Async async, request_type* requests)
   {
-    COMB::ignore_unused(con, async);
+    COMB::ignore_unused(con, msgs, len, async, requests);
     LOGPRINTF("%p recv Irecv con %p msgs %p len %d\n", this, &con, msgs, len);
     if (len <= 0) return;
     MPI_Win_post(con_comm.recv_group, 0, con_comm.recv_win);
+    return;
     for (IdxT i = 0; i < len; ++i) {
       const message_type* msg = msgs[i];
       LOGPRINTF("%p recv Irecv msg %p buf %p nbytes %d to %d tag %d\n",
