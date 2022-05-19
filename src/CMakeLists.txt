@@ -147,7 +147,7 @@ if(COMB_ENABLE_MPI)
 endif()
 
 if(COMB_ENABLE_MPI)
-  builddocyclescom(mpi_active_rma On)
+  builddocyclescom(mpi_active_rma Off)
 endif()
 
 if(COMB_ENABLE_MPI)
