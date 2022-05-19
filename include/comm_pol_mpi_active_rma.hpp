@@ -292,7 +292,6 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
   // use the base class constructor
   using base::base;
 
-
   void finalize()
   {
     // call base finalize
@@ -301,7 +300,7 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
 
   void setup(context_type&, communicator_type& con_comm, message_type** msgs, IdxT len, request_type*)
   {
-    LOGPRINTF("%p send setup allocate msgs %p len %d\n", this, msgs, len);
+    LOGPRINTF("%p send setup con_comm %p msgs %p len %d\n", this, &con_comm, msgs, len);
     if (len <= 0) return;
    
     const size_t var_size = this->m_variables.size();
@@ -322,12 +321,12 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
 
     MPI_Win_create(msgs[0]->buf, nbytes, 1, MPI_INFO_NULL, con_comm.comm, &con_comm.send_win);
 
-    LOGPRINTF("%p finished initializing send communication\n", this);
+    LOGPRINTF("%p finished send setup\n", this);
   }
 
   void cleanup(communicator_type& con_comm, message_type** msgs, IdxT len, request_type*)
   {
-    LOGPRINTF("%p send cleanup msgs %p len %d\n", this, msgs, len);
+    LOGPRINTF("%p send cleanup con_comm %p msgs %p len %d\n", this, &con_comm, msgs, len);
     if (len <= 0) return;
 
     MPI_Win_free(&con_comm.send_win);
@@ -344,9 +343,10 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
 
   void allocate(context_type& con, communicator_type&, message_type**, IdxT len, detail::Async)
   {
+    LOGPRINTF("%p send allocate con %p len %d\n", this, &con, len);
     if (len <= 0) return;
     if (comb_allow_pack_loop_fusion()) {
-      LOGPRINTF("%p send allocate for kernel fusion\n", this);
+      LOGPRINTF("%p send allocate for kernel fusion con %p\n", this, &con);
       this->m_fuser.allocate(con, this->m_variables, this->m_items.size());
     }
   }
@@ -444,10 +444,9 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
     COMB::ignore_unused(con, con_comm);
   }
 
-  void Isend(context_type& con, communicator_type& con_comm, message_type** msgs, IdxT len, detail::Async async, request_type* requests)
+  void Isend(context_type &con, communicator_type& con_comm, message_type** msgs, IdxT len, detail::Async, request_type*)
   {
-    COMB::ignore_unused(async, requests);
-    LOGPRINTF("%p send Isend con %p msgs %p len %d\n", this, &con, msgs, len);
+    LOGPRINTF("%p send Isend con_comm %p msgs %p len %d\n", this, &con_comm, msgs, len);
     if (len <= 0) return;
     start_Isends(con, con_comm);
     MPI_Win_start(con_comm.send_group, 0, con_comm.recv_win);
@@ -472,9 +471,10 @@ struct MessageGroup<MessageBase::Kind::send, mpi_active_rma_pol, exec_policy>
 
   void deallocate(context_type& con, communicator_type&, message_type**, IdxT len, detail::Async)
   {
+    LOGPRINTF("%p send dallocate con %p len %d\n", this, &con, len);
     if (len <= 0) return;
     if (comb_allow_pack_loop_fusion()) {
-      LOGPRINTF("%p send deallocate for kernel fusion\n", this);
+      LOGPRINTF("%p send deallocate for kernel fusion con %p\n", this, &con);
       this->m_fuser.deallocate(con);
     }
   }
@@ -508,20 +508,9 @@ struct MessageGroup<MessageBase::Kind::recv, mpi_active_rma_pol, exec_policy>
     base::finalize();
   }
 
-  void setup(context_type& con, communicator_type& con_comm, message_type** msgs, IdxT len, request_type* requests)
+  void setup(context_type&, communicator_type& con_comm, message_type** msgs, IdxT len, request_type*)
   {
-    COMB::ignore_unused(con, con_comm, msgs, len, requests);
-  }
-
-  void cleanup(communicator_type& con_comm, message_type** msgs, IdxT len, request_type* requests)
-  {
-    COMB::ignore_unused(con_comm, msgs, len, requests);
-  }
-
-  void allocate(context_type& con, communicator_type& con_comm, message_type** msgs, IdxT len, detail::Async async)
-  {
-    COMB::ignore_unused(con, async);
-    LOGPRINTF("%p recv allocate con %p msgs %p len %d\n", this, &con, msgs, len);
+    LOGPRINTF("%p recv setup con_comm %p msgs %p len %d\n", this, &con_comm, msgs, len);
     if (len <= 0) return;
     
     std::vector<long> offsets(len);
@@ -536,36 +525,58 @@ struct MessageGroup<MessageBase::Kind::recv, mpi_active_rma_pol, exec_policy>
 
     char *const buf = reinterpret_cast<char*>(this->m_aloc.allocate(nbytes));
     for (IdxT i = 0; i < len; i++) msgs[i]->buf = buf + offsets[i];
-    LOGPRINTF("%p recv allocate %d msgs %p buf %p nbytes %lu\n", this, len, msgs[0], msgs[0]->buf, nbytes);
+    LOGPRINTF("%p recv setup allocate %d msgs %p buf %p nbytes %lu\n", this, len, msgs[0], msgs[0]->buf, nbytes);
 
     MPI_Win_create(msgs[0]->buf, nbytes, 1, MPI_INFO_NULL, con_comm.comm, &con_comm.recv_win);
 
-    {
-      constexpr int tag = 33;
-      const int send_size = con_comm.send_ranks.size();
-      const int recv_size = con_comm.recv_ranks.size();
-      const int reqs_size = send_size + recv_size;
-      std::vector<MPI_Request> reqs(reqs_size);
+    constexpr int tag = 33;
+    const int send_size = con_comm.send_ranks.size();
+    const int recv_size = con_comm.recv_ranks.size();
+    const int reqs_size = send_size + recv_size;
+    std::vector<MPI_Request> reqs(reqs_size);
 
-      // Recv window offsets from future receivers
-      con_comm.offsets.resize(send_size);
-      for (int i = 0; i < send_size; i++) MPI_Irecv(&con_comm.offsets[i], 1, MPI_LONG, con_comm.send_ranks[i], tag, con_comm.comm, &reqs[i]);
+    // Recv window offsets from future receivers
+    con_comm.offsets.resize(send_size);
+    for (int i = 0; i < send_size; i++) MPI_Irecv(&con_comm.offsets[i], 1, MPI_LONG, con_comm.send_ranks[i], tag, con_comm.comm, &reqs[i]);
 
-      // Send window offsets to future senders
-      for (int i = 0; i < recv_size; i++) MPI_Isend(&offsets[i], 1, MPI_LONG, con_comm.recv_ranks[i], tag, con_comm.comm, &reqs[i + send_size]);
+    // Send window offsets to future senders
+    for (int i = 0; i < recv_size; i++) MPI_Isend(&offsets[i], 1, MPI_LONG, con_comm.recv_ranks[i], tag, con_comm.comm, &reqs[i + send_size]);
 
-      MPI_Waitall(reqs_size, reqs.data(), MPI_STATUSES_IGNORE);
+    MPI_Waitall(reqs_size, reqs.data(), MPI_STATUSES_IGNORE);
+
+    LOGPRINTF("%p finished recv setup\n", this);
+  }
+
+  void cleanup(communicator_type& con_comm, message_type** msgs, IdxT len, request_type*)
+  {
+    LOGPRINTF("%p recv cleanup con_comm %p msgs %p len %d\n", this, con_comm, msgs, len);
+    if (len <= 0) return;
+
+    MPI_Win_free(&con_comm.recv_win);
+
+    LOGPRINTF("%p recv cleanup deallocate %d msgs %p buf %p\n", this, len, msgs[0], msgs[0]->buf);
+    this->m_aloc.deallocate(msgs[0]->buf);
+
+    for (IdxT i = 0; i < len; ++i) {
+      message_type* msg = msgs[i];
+      assert(msg->buf != nullptr);
+      msg->buf = nullptr;
     }
+  }
 
+  void allocate(context_type& con, communicator_type&, message_type**, IdxT len, detail::Async)
+  {
+    LOGPRINTF("%p recv allocate con %p len %d\n", this, &con, len);
+    if (len <= 0) return;
     if (comb_allow_pack_loop_fusion()) {
+      LOGPRINTF("%p recv allocate for kernel fusion con %p\n", this, &con);
       this->m_fuser.allocate(con, this->m_variables, this->m_items.size());
     }
   }
 
-  void Irecv(context_type& con, communicator_type& con_comm, message_type** msgs, IdxT len, detail::Async async, request_type* requests)
+  void Irecv(context_type&, communicator_type& con_comm, message_type**, IdxT len, detail::Async, request_type*)
   {
-    COMB::ignore_unused(con, msgs, len, async, requests);
-    LOGPRINTF("%p recv Irecv con %p msgs %p len %d\n", this, &con, msgs, len);
+    LOGPRINTF("%p recv Irecv con_comm %p len %d\n", this, &con_comm, len);
     if (len <= 0) return;
     MPI_Win_post(con_comm.recv_group, 0, con_comm.recv_win);
   }
@@ -643,24 +654,12 @@ struct MessageGroup<MessageBase::Kind::recv, mpi_active_rma_pol, exec_policy>
     con.finish_group(this->m_groups[len-1]);
   }
 
-  void deallocate(context_type& con, communicator_type& con_comm, message_type** msgs, IdxT len, detail::Async async)
+  void deallocate(context_type& con, communicator_type&, message_type**, IdxT len, detail::Async)
   {
-    COMB::ignore_unused(con, async);
-    LOGPRINTF("%p recv deallocate con %p msgs %p len %d\n", this, &con, msgs, len);
+    LOGPRINTF("%p recv deallocate con %p len %d\n", this, &con, len);
     if (len <= 0) return;
-
-    MPI_Win_free(&con_comm.recv_win);
-
-    LOGPRINTF("%p recv deallocate %d msgs %p buf %p\n", this, len, msgs[0], msgs[0]->buf);
-    this->m_aloc.deallocate(msgs[0]->buf);
-
-    for (IdxT i = 0; i < len; ++i) {
-      message_type* msg = msgs[i];
-      assert(msg->buf != nullptr);
-      msg->buf = nullptr;
-    }
-
     if (comb_allow_pack_loop_fusion()) {
+      LOGPRINTF("%p recv deallocate for kernel fusion con %p\n", this, &con);
       this->m_fuser.deallocate(con);
     }
   }
