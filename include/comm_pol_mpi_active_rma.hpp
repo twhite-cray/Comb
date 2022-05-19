@@ -30,7 +30,7 @@ struct mpi_active_rma_pol {
   static const bool mock = false;
   // compile mpi_type packing/unpacking tests for this comm policy
   static const bool use_mpi_type = false;
-  static const bool persistent = false;
+  static const bool persistent = true;
   static const char* get_name() { return "mpi_active_rma"; }
   using send_request_type = MPI_Request;
   using recv_request_type = MPI_Request;

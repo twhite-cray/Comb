@@ -897,7 +897,7 @@ int main(int argc, char** argv)
 
   COMB::print_message_info(comminfo, info, alloc.host.allocator(), num_vars, do_print_packing_sizes, do_print_message_sizes);
 
-  Timer tm(2*6*ncycles);
+  Timer tm(2*6*ncycles+2*2);
   Timer tm_total(1024);
 
   exec.create_executors(alloc);

@@ -247,6 +247,11 @@ struct Timer {
   }
 
   void resize(size_t size) {
+#ifdef COMB_ENABLE_HIP
+    // Resize doesn't work with Hip events
+    // Timer doesn't properly handle copy?
+    assert(idx == 0);
+#endif
     if (idx > size) idx = size;
     times.resize(size);
     names.resize(size);
